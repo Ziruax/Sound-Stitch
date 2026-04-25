@@ -1,7 +1,7 @@
 import streamlit as st
 import tempfile
 import os
-import numpy as np
+import warnings
 from PIL import Image
 from moviepy.editor import (
     ImageClip,
@@ -10,6 +10,9 @@ from moviepy.editor import (
     CompositeVideoClip,
     concatenate_videoclips,
 )
+
+# Suppress MoviePy syntax warnings about invalid escape sequences
+warnings.filterwarnings("ignore", category=SyntaxWarning, module="moviepy")
 
 # ----------------------------------------------------------------------
 # Streamlit page configuration
@@ -20,14 +23,30 @@ st.set_page_config(
     layout="wide",
 )
 
-st.title("🎬  Combine Audio & Images into Video (Ken Burns Effect)")
+st.title("🎬  Audio & Images to Video (Ken Burns)")
 st.markdown(
     """
-    Upload an **audio file** and several **images**.  
-    The audio will be split equally across all images, and each image will be shown with a subtle zoom‑in effect (Ken Burns).  
-    Choose the order of the images, then click **Generate Video**.
+    Upload **audio** and **images**. The audio is split equally across all images,  
+    and each image gets a subtle zoom‑in (Ken Burns) effect.  
+    Choose the output size and image order, then generate the video.
     """
 )
+
+# ----------------------------------------------------------------------
+# Output size selector
+# ----------------------------------------------------------------------
+size_option = st.selectbox(
+    "📐  Output video size",
+    ["Landscape (16:9)", "Portrait (9:16)", "Square (1:1)"],
+    index=0,
+)
+
+if size_option == "Landscape (16:9)":
+    TARGET_W, TARGET_H = 1920, 1080
+elif size_option == "Portrait (9:16)":
+    TARGET_W, TARGET_H = 1080, 1920
+else:  # Square
+    TARGET_W, TARGET_H = 1080, 1080
 
 # ----------------------------------------------------------------------
 # File uploaders
@@ -48,9 +67,9 @@ image_files = st.file_uploader(
 # Order selection (descending by default)
 # ----------------------------------------------------------------------
 order = st.radio(
-    "🔽  Order of images in the video",
+    "🔽  Image order in video",
     ["Descending (last uploaded first)", "Ascending (as uploaded)"],
-    index=0,  # default descending
+    index=0,
 )
 
 # ----------------------------------------------------------------------
@@ -81,7 +100,7 @@ if st.button("🎥  Generate Video", type="primary"):
 
             # ---- Apply order ----
             if order.startswith("Descending"):
-                image_paths = image_paths[::-1]  # reverse list
+                image_paths = image_paths[::-1]
 
             # ---- Read audio duration ----
             audio_clip = AudioFileClip(audio_path)
@@ -90,59 +109,45 @@ if st.button("🎥  Generate Video", type="primary"):
             clip_duration = total_duration / n_images
 
             st.info(
-                f"⏱️  Audio length: **{total_duration:.2f} s**  •  "
+                f"⏱️  Audio: **{total_duration:.2f}s**  •  "
                 f"Images: **{n_images}**  •  "
-                f"Each image: **{clip_duration:.2f} s**"
+                f"Each: **{clip_duration:.2f}s**  •  "
+                f"Output: **{TARGET_W}×{TARGET_H}**"
             )
 
-            # ---- Constants for the output video ----
-            TARGET_W, TARGET_H = 1920, 1080
+            # ---- Constants ----
             FPS = 24
-            ZOOM_FACTOR = 0.04  # 4% zoom over the clip duration
-            BITRATE = "5000k"   # high quality for 1080p
+            ZOOM_FACTOR = 0.04  # 4% zoom per clip
+            BITRATE = "5000k"
 
             clips = []
-            with st.spinner("🔄  Rendering video... This may take a while."):
+            with st.spinner("🔄  Rendering video…"):
                 try:
                     for img_path in image_paths:
-                        # Get original image size
-                        with Image.open(img_path) as img:
-                            img_w, img_h = img.size
-
-                        # Scale factor to cover the target frame completely
-                        scale = max(TARGET_W / img_w, TARGET_H / img_h)
-                        base_w = int(img_w * scale)
-                        base_h = int(img_h * scale)
-
-                        # Black background clip for the target size
+                        # Background clip of the chosen size
                         background = ColorClip(
                             size=(TARGET_W, TARGET_H),
                             color=(0, 0, 0),
                             duration=clip_duration,
                         )
 
-                        # Image clip, resized to cover the frame
-                        image_clip = (
-                            ImageClip(img_path)
-                            .set_duration(clip_duration)
-                            .resize(newsize=(base_w, base_h))
-                        )
+                        # Image clip (no pre‑scaling – original size)
+                        image_clip = ImageClip(img_path).set_duration(clip_duration)
 
-                        # Ken Burns effect: progressive zoom in
+                        # Ken Burns zoom effect
                         def zoom_effect(t):
                             return 1.0 + ZOOM_FACTOR * t / clip_duration
 
                         zoomed_clip = image_clip.resize(zoom_effect).set_position("center")
 
-                        # Compose over the black background to force 1920x1080
                         composite = CompositeVideoClip([background, zoomed_clip])
                         clips.append(composite)
 
-                    # Concatenate all image clips
+                    # Concatenate all clips
                     final_video = concatenate_videoclips(clips, method="compose")
                     final_video = final_video.set_audio(audio_clip)
 
-                    # Write the final video file
+                    # Write the final video
                     output_path = os.path.join(tmpdir, "output.mp4")
                     final_video.write_videofile(
                         output_path,
@@ -152,23 +157,22 @@ if st.button("🎥  Generate Video", type="primary"):
                         bitrate=BITRATE,
                         preset="medium",
                         threads=2,
-                        logger=None,  # suppress console logs from moviepy
+                        logger=None,
                     )
 
                 finally:
-                    # Clean up resources
                     audio_clip.close()
                     final_video.close()
                     for c in clips:
                         c.close()
 
-                # ---- Provide download button ----
-                with open(output_path, "rb") as f:
-                    video_bytes = f.read()
-                st.success("✅  Video generated! Click the button below to download.")
-                st.download_button(
-                    label="⬇️  Download Video",
-                    data=video_bytes,
-                    file_name="ken_burns_video.mp4",
-                    mime="video/mp4",
-                )
+            # ---- Provide download ----
+            with open(output_path, "rb") as f:
+                video_bytes = f.read()
+            st.success("✅  Video ready! Click below to download.")
+            st.download_button(
+                label="⬇️  Download Video",
+                data=video_bytes,
+                file_name="ken_burns_video.mp4",
+                mime="video/mp4",
+            )
