@@ -4,10 +4,15 @@ import os
 import warnings
 from PIL import Image
 
-# Monkey-patch for modern Pillow compatibility
-if not hasattr(Image, 'ANTIALIAS'):
+# ---------------------------------- CRITICAL FIXES (must come first) ----------------------------------
+# 1. Patch Pillow so MoviePy can still use ANTIALIAS (which is now LANCZOS in modern Pillow)
+if not hasattr(Image, "ANTIALIAS"):
     Image.ANTIALIAS = Image.LANCZOS
 
+# 2. Suppress all MoviePy SyntaxWarnings before they are printed
+warnings.filterwarnings("ignore", category=SyntaxWarning, module="moviepy")
+
+# 3. Now import moviepy safely
 from moviepy.editor import (
     ImageClip,
     AudioFileClip,
@@ -15,9 +20,6 @@ from moviepy.editor import (
     CompositeVideoClip,
     concatenate_videoclips,
 )
-
-# Suppress harmless MoviePy syntax warnings
-warnings.filterwarnings("ignore", category=SyntaxWarning, module="moviepy")
 
 # ----------------------------------------------------------------------
 st.set_page_config(page_title="Audio + Images → Video", page_icon="🎬", layout="wide")
@@ -107,8 +109,9 @@ if st.button("🎥  Generate Video", type="primary"):
             BITRATE = "5000k"
 
             clips = []
-            final_video = None
+            final_video = None           # will be set only if successful
             output_path = os.path.join(tmpdir, "output.mp4")
+            error_occurred = False
 
             with st.spinner("🔄  Rendering video…"):
                 try:
@@ -130,7 +133,6 @@ if st.button("🎥  Generate Video", type="primary"):
                     final_video = concatenate_videoclips(clips, method="compose")
                     final_video = final_video.set_audio(audio_clip)
 
-                    # This call is correctly indented, each argument on its own line
                     final_video.write_videofile(
                         output_path,
                         codec="libx264",
@@ -143,16 +145,18 @@ if st.button("🎥  Generate Video", type="primary"):
                     )
 
                 except Exception as e:
-                    st.error(f"❌  Error: {e}")
+                    error_occurred = True
+                    st.error(f"❌  Error during video generation: {e}")
                 finally:
+                    # Clean up resources safely
                     if audio_clip:
                         audio_clip.close()
-                    if final_video:
+                    if final_video is not None:
                         final_video.close()
                     for c in clips:
                         c.close()
 
-            if final_video and os.path.exists(output_path):
+            if not error_occurred and os.path.exists(output_path):
                 with open(output_path, "rb") as f:
                     video_bytes = f.read()
                 st.success("✅  Video generated! Download it below.")
