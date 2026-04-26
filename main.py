@@ -3,6 +3,11 @@ import tempfile
 import os
 import warnings
 from PIL import Image
+
+# Monkey-patch to make MoviePy compatible with modern Pillow versions
+if not hasattr(Image, 'ANTIALIAS'):
+    Image.ANTIALIAS = Image.LANCZOS
+
 from moviepy.editor import (
     ImageClip,
     AudioFileClip,
@@ -11,7 +16,7 @@ from moviepy.editor import (
     concatenate_videoclips,
 )
 
-# Suppress MoviePy syntax warnings about invalid escape sequences
+# Suppress harmless MoviePy syntax warnings
 warnings.filterwarnings("ignore", category=SyntaxWarning, module="moviepy")
 
 # ----------------------------------------------------------------------
@@ -121,6 +126,7 @@ if st.button("🎥  Generate Video", type="primary"):
             BITRATE = "5000k"
 
             clips = []
+            final_video = None  # initialize to avoid NameError
             with st.spinner("🔄  Rendering video…"):
                 try:
                     for img_path in image_paths:
@@ -160,19 +166,25 @@ if st.button("🎥  Generate Video", type="primary"):
                         logger=None,
                     )
 
+                except Exception as e:
+                    st.error(f"❌  Error during video generation: {e}")
                 finally:
-                    audio_clip.close()
-                    final_video.close()
+                    # Clean up resources safely
+                    if audio_clip:
+                        audio_clip.close()
+                    if final_video:
+                        final_video.close()
                     for c in clips:
                         c.close()
 
-            # ---- Provide download ----
-            with open(output_path, "rb") as f:
-                video_bytes = f.read()
-            st.success("✅  Video ready! Click below to download.")
-            st.download_button(
-                label="⬇️  Download Video",
-                data=video_bytes,
-                file_name="ken_burns_video.mp4",
-                mime="video/mp4",
-            )
+            # ---- Provide download (only if video was created) ----
+            if final_video and os.path.exists(output_path):
+                with open(output_path, "rb") as f:
+                    video_bytes = f.read()
+                st.success("✅  Video generated! Click the button below to download.")
+                st.download_button(
+                    label="⬇️  Download Video",
+                    data=video_bytes,
+                    file_name="ken_burns_video.mp4",
+                    mime="video/mp4",
+                )
